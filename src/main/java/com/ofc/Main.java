@@ -25,14 +25,14 @@ public class Main {
     final int FAULTY_PROCESSES = 1;
 
     List<ActorRef> processes = IntStream.range(0, NUM_PROCESSES)
-        .mapToObj(i -> system.actorOf(Process.props(i), "process-" + i))
+        .mapToObj(i -> system.actorOf(Process.props(i, NUM_PROCESSES), "process-" + i))
         .collect(Collectors.toList());
 
     // send process list to all actors
     processes.forEach(process -> process.tell(new Process.SetProcesses(processes), ActorRef.noSender()));
 
-    long seed = 12345;
-    List<Integer> crashIndices = new Random(seed).ints(0, NUM_PROCESSES)
+    Random random = new Random(12345);
+    List<Integer> crashIndices = random.ints(0, NUM_PROCESSES)
         .distinct().limit(FAULTY_PROCESSES).boxed()
         .collect(Collectors.toList());
 
@@ -42,8 +42,30 @@ public class Main {
       ActorRef process = processes.get(i);
       if (crashIndices.contains(i)) {
         process.tell(new Process.Crash(), ActorRef.noSender());
+      } else {
+        // propose random value (0 or 1)
+        int value = random.nextInt(2);
+        process.tell(new Process.Propose(value), ActorRef.noSender());
       }
     }
+
+    // TODO: add leader election
+    // system.scheduler().scheduleOnce(
+    // Duration.ofSeconds(2),
+    // () -> {
+    // List<ActorRef> candidates = processes.stream()
+    // .filter(p -> !crashIndices.contains(processes.indexOf(p)))
+    // .collect(Collectors.toList());
+    // ActorRef leader = candidates.get(random.nextInt(candidates.size()));
+
+    // processes.forEach(p -> p.tell(new Process.ElectLeader(leader),
+    // ActorRef.noSender()));
+
+    // processes.stream()
+    // .filter(p -> !p.equals(leader))
+    // .forEach(p -> p.tell(new Process.Hold(), ActorRef.noSender()));
+    // },
+    // system.dispatcher());
 
     long endTime = System.nanoTime();
     long latency = endTime - startTime;
