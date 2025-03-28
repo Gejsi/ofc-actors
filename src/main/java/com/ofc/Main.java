@@ -21,8 +21,8 @@ public class Main {
     ActorRef deadLetterMonitor = system.actorOf(Props.create(DeadLetterMonitor.class));
     system.eventStream().subscribe(deadLetterMonitor, DeadLetter.class);
 
-    final int NUM_PROCESSES = 3;
-    final int FAULTY_PROCESSES = 1;
+    final int NUM_PROCESSES = 10;
+    final int FAULTY_PROCESSES = (NUM_PROCESSES - 1) / 2;
 
     List<ActorRef> processes = IntStream.range(0, NUM_PROCESSES)
         .mapToObj(i -> system.actorOf(Process.props(i, NUM_PROCESSES), "process-" + i))
@@ -44,8 +44,7 @@ public class Main {
         process.tell(new Process.Crash(), ActorRef.noSender());
       } else {
         // propose random value (0 or 1)
-        int value = random.nextInt(2);
-        process.tell(new Process.Propose(value), ActorRef.noSender());
+        process.tell(new Process.Propose(new Random().nextInt(2)), ActorRef.noSender());
       }
     }
 
@@ -74,7 +73,7 @@ public class Main {
     // this value may need to be increased depending on the
     // number of processes/operations
     // try {
-    // Thread.sleep(Duration.ofSeconds(1));
+    // Thread.sleep(Duration.ofSeconds(10));
     // } catch (InterruptedException e) {
     // e.printStackTrace();
     // }

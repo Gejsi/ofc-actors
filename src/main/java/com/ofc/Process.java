@@ -60,7 +60,7 @@ public class Process extends AbstractActor {
 
   private void handleSetProcesses(SetProcesses msg) {
     this.processes = msg.processes;
-    log.info("Process {} initialized with all {} processes", id, processes.size());
+    log.info("Process {} initialized with all {} processes", id, n);
   }
 
   private void handlePropose(Propose msg) {
@@ -72,6 +72,7 @@ public class Process extends AbstractActor {
     proposal = msg.value();
     ballot += n;
     gatheredResponses.clear();
+    ackResponses.clear();
 
     broadcast(new Read(ballot));
     log.info("Process {} started proposal {} with ballot {}", id, proposal, ballot);
@@ -93,14 +94,13 @@ public class Process extends AbstractActor {
   private void handleGather(Gather msg) {
     // filter stale messages, only the current ballot is processed
     if (msg.ballot() != ballot) {
-      log.debug("[P{}] FILTERING stale messages while gathering from {}: {}", id, sender().path().name(), msg);
+      log.debug("Ignoring GATHER for old/future ballot {} (current is {})", msg.ballot(), ballot);
       return;
     }
 
     gatheredResponses.put(sender(), msg);
-    log.debug("[P{}] GATHER response from {}: {}", id, sender().path().name(), msg);
 
-    if (gatheredResponses.size() > processes.size() / 2) {
+    if (gatheredResponses.size() > n / 2) {
       Optional<Gather> maxEntry = gatheredResponses.values().stream()
           .filter(res -> res.estBallot() > 0)
           .max(Comparator.comparingInt(Gather::estBallot));
@@ -111,7 +111,7 @@ public class Process extends AbstractActor {
       });
 
       gatheredResponses.clear();
-      log.info("Process {} imposes proposal={} with ballot={}", id, proposal, ballot);
+      log.info("Process {} imposed proposal={} with ballot={}", id, proposal, ballot);
       broadcast(new Impose(ballot, proposal));
     }
   }
@@ -121,8 +121,9 @@ public class Process extends AbstractActor {
       log.debug("[P{}] REJECTING impose ballot={}", id, msg.ballot());
       sender().tell(new Abort(msg.ballot()), self());
     } else {
-      imposeBallot = msg.ballot();
       estimate = msg.value();
+      imposeBallot = msg.ballot();
+      readBallot = Math.max(readBallot, msg.ballot()); // accepting impose implies accepting reads up to this ballot
       log.debug("[P{}] ACCEPTING impose ballot={} value={}", id, msg.ballot(), msg.value());
       sender().tell(new Ack(msg.ballot()), self());
     }
@@ -130,12 +131,13 @@ public class Process extends AbstractActor {
 
   private void handleAck(Ack msg) {
     if (msg.ballot() != ballot) {
-      log.debug("[P{}] FILTERING stale messages while acknowledging from {}: {}", id, sender().path().name(), msg);
+      log.debug("Ignoring ACK for old/future ballot {} (current is {})", msg.ballot(), ballot);
       return;
     }
 
     ackResponses.put(sender(), msg);
-    if (ackResponses.size() > processes.size() / 2) {
+
+    if (ackResponses.size() > n / 2) {
       log.info("Process {} decided {}", id, proposal);
       broadcast(new Decide(proposal));
       decided = true;
@@ -155,7 +157,7 @@ public class Process extends AbstractActor {
 
   private void handleAbort(Abort msg) {
     if (msg.ballot() != ballot) {
-      log.debug("[P{}] FILTERING stale messages while aborting from {}: {}", id, sender().path().name(), msg);
+      log.debug("Ignoring ABORT for old/future ballot {} (current is {})", msg.ballot(), ballot);
       return;
     }
 
