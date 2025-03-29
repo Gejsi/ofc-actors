@@ -74,15 +74,21 @@ public class Main {
                 },
                 system.dispatcher());
 
-
-        long endTime = System.nanoTime();
-        long latency = endTime - startTime;
-
         // timeout added to put the latency log as last,
         // this value may need to be increased depending on the
         // number of processes/operations
         try {
-            Thread.sleep(20000);
+            while (Process.firstDecided.get() == 0) {
+                Thread.sleep(100);
+            }
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+
+        long latency = Process.firstDecided.get() - startTime;
+
+        try {
+            Thread.sleep(1000);
         } catch (InterruptedException e) {
             e.printStackTrace();
         }

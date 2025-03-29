@@ -9,11 +9,14 @@ import akka.japi.pf.FI;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.concurrent.locks.Condition;
 import java.util.concurrent.locks.Lock;
 import java.util.concurrent.locks.ReentrantLock;
 
 public class Process extends AbstractActor {
+    public static AtomicLong firstDecided = new AtomicLong(0);
+
     private final int id;
     private final int n;
     private final LoggingAdapter log = Logging.getLogger(getContext().getSystem(), this);
@@ -195,6 +198,10 @@ public class Process extends AbstractActor {
             log.info("Process {} decided {}", id, proposal);
             broadcast(new Decide(proposal));
             decided = true;
+
+            if (firstDecided.compareAndSet(0, System.nanoTime())) {
+                log.info("First process decided at {}", firstDecided.get());
+            }
         }
     }
 
