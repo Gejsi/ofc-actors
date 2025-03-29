@@ -5,8 +5,10 @@ import akka.actor.ActorRef;
 import akka.actor.Props;
 import akka.event.Logging;
 import akka.event.LoggingAdapter;
+import akka.japi.pf.FI;
 
 import java.util.*;
+import java.util.concurrent.atomic.AtomicBoolean;
 
 public class Process extends AbstractActor {
     private final int id;
@@ -18,38 +20,44 @@ public class Process extends AbstractActor {
     private int readBallot;
     private Integer estimate;
     private Integer proposal;
+    private final double crashProbability;
     private Map<ActorRef, Gather> gatheredResponses = new HashMap<>();
     private Map<ActorRef, Ack> ackResponses = new HashMap<>();
     // actors are persistent, so we need explicit state
     // to enforce the process halts after deciding
     private boolean decided = false;
 
-    private Process(int id, int n) {
+    // technical stuff
+    private final CrashProxy crashProxy;
+
+
+    private Process(int id, int n, double crashProbability) {
         this.id = id;
         this.n = n;
         this.ballot = id - n;
         this.imposeBallot = id - n;
         this.readBallot = 0;
+        this.crashProbability = crashProbability;
+        this.crashProxy = new CrashProxy(crashProbability);
     }
 
-    public static Props props(int id, int n) {
-        return Props.create(Process.class, () -> new Process(id, n));
+    public static Props props(int id, int n, double crashProbability) {
+        return Props.create(Process.class, () -> new Process(id, n, crashProbability));
     }
 
     @Override
     public Receive createReceive() {
         return receiveBuilder()
-                .match(SetProcesses.class, this::handleSetProcesses)
-                .match(Propose.class, this::handlePropose)
-                .match(Read.class, this::handleRead)
-                .match(Gather.class, this::handleGather)
-                .match(Impose.class, this::handleImpose)
-                .match(Ack.class, this::handleAck)
-                .match(Decide.class, this::handleDecide)
-                .match(Abort.class, this::handleAbort)
+                .match(SetProcesses.class, crashProxy.getCrashableHandler(this::handleSetProcesses))
+                .match(Propose.class, crashProxy.getCrashableHandler(this::handlePropose))
+                .match(Read.class, crashProxy.getCrashableHandler(this::handleRead))
+                .match(Gather.class, crashProxy.getCrashableHandler(this::handleGather))
+                .match(Impose.class, crashProxy.getCrashableHandler(this::handleImpose))
+                .match(Ack.class, crashProxy.getCrashableHandler(this::handleAck))
+                .match(Decide.class, crashProxy.getCrashableHandler(this::handleDecide))
+                .match(Abort.class, crashProxy.getCrashableHandler(this::handleAbort))
                 .match(Crash.class, msg -> {
-                    log.info("Process {} crashed", id);
-                    getContext().become(crashed());
+                    crashProxy.enableCrash();
                 })
                 .build();
     }
@@ -207,4 +215,42 @@ public class Process extends AbstractActor {
     }
 
     // TODO: add messages for leader handling (like Hold, ElectLeader)
+
+    // stuff for crash
+
+    private class CrashProxy {
+        private AtomicBoolean crashEnabled = new AtomicBoolean(false);
+        private AtomicBoolean crashed = new AtomicBoolean(false);
+
+        private final double probability;
+
+        public CrashProxy(double probability) {
+            this.probability = probability;
+        }
+
+        public <T> FI.UnitApply<T> getCrashableHandler(FI.UnitApply<T> msgHandler) {
+            return (msg) -> {
+                if (crashed.get()) {
+                    log.info("Process {} ignoring message because it has crashed", id);
+                    return;
+                }
+
+                // try to crash with given probability
+                if (crashEnabled.get() && Math.random() < probability) {
+                    crashed.set(true);
+                    log.info("Process {} crashed", id);
+                    getContext().become(crashed());
+
+                    log.info("Process {} ignoring message because it has crashed", id);
+                    return;
+                }
+
+                msgHandler.apply(msg);
+            };
+        }
+
+        public void enableCrash() {
+            crashEnabled.set(true);
+        }
+    }
 }

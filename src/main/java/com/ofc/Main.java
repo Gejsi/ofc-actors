@@ -12,6 +12,12 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class Main {
+
+    private static final int NUM_PROCESSES = 10;
+    private static final int FAULTY_PROCESSES = (NUM_PROCESSES - 1) / 2;
+    private static final double CRASH_PROBABILITY = 0.1;
+
+
     public static void main(String[] args) {
         ActorSystem system = ActorSystem.create("ofc");
         var log = Logging.getLogger(system, Main.class);
@@ -21,11 +27,9 @@ public class Main {
         ActorRef deadLetterMonitor = system.actorOf(Props.create(DeadLetterMonitor.class));
         system.eventStream().subscribe(deadLetterMonitor, DeadLetter.class);
 
-        final int NUM_PROCESSES = 10;
-        final int FAULTY_PROCESSES = (NUM_PROCESSES - 1) / 2;
 
         List<ActorRef> processes = IntStream.range(0, NUM_PROCESSES)
-                .mapToObj(i -> system.actorOf(Process.props(i, NUM_PROCESSES), "process-" + i))
+                .mapToObj(i -> system.actorOf(Process.props(i, NUM_PROCESSES, CRASH_PROBABILITY), "process-" + i))
                 .collect(Collectors.toList());
 
         // send process list to all actors
@@ -41,6 +45,7 @@ public class Main {
         for (int i = 0; i < NUM_PROCESSES; i++) {
             ActorRef process = processes.get(i);
             if (crashIndices.contains(i)) {
+                log.info("Crashing process {}", i);
                 process.tell(new Process.Crash(), ActorRef.noSender());
             } else {
                 // propose random value (0 or 1)
