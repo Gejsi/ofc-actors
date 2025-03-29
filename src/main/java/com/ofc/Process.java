@@ -9,6 +9,9 @@ import akka.japi.pf.FI;
 
 import java.util.*;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.Condition;
+import java.util.concurrent.locks.Lock;
+import java.util.concurrent.locks.ReentrantLock;
 
 public class Process extends AbstractActor {
     private final int id;
@@ -29,6 +32,10 @@ public class Process extends AbstractActor {
 
     // technical stuff
     private final CrashProxy crashProxy;
+    private AtomicBoolean holdEnabled = new AtomicBoolean(false);
+    private Lock proposeLock = new ReentrantLock();
+    private Condition proposeCondition = proposeLock.newCondition();
+    private boolean proposing = false;
 
 
     private Process(int id, int n, double crashProbability) {
@@ -48,6 +55,7 @@ public class Process extends AbstractActor {
     @Override
     public Receive createReceive() {
         return receiveBuilder()
+                .match(Launch.class, this::handleLaunch)
                 .match(SetProcesses.class, crashProxy.getCrashableHandler(this::handleSetProcesses))
                 .match(Propose.class, crashProxy.getCrashableHandler(this::handlePropose))
                 .match(Read.class, crashProxy.getCrashableHandler(this::handleRead))
@@ -59,7 +67,43 @@ public class Process extends AbstractActor {
                 .match(Crash.class, msg -> {
                     crashProxy.enableCrash();
                 })
+                .match(Hold.class, msg -> {
+                    log.info("Process {} received HOLD message", id);
+                    holdEnabled.set(true);
+                })
                 .build();
+    }
+
+    private void startProposingThread() {
+        int value = new Random().nextInt(2);
+
+        new Thread(() -> {
+            while (!decided && !holdEnabled.get()) {
+                try {
+                    proposeLock.lock();
+                    while (proposing) {
+                        proposeCondition.await();
+                    }
+                    proposing = true;
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                } finally {
+                    proposeLock.unlock();
+                }
+
+                log.info("Process {} proposing {}", id, value);
+                self().tell(new Propose(value), self());
+            }
+
+            log.info("Process {} halted", id);
+        }).start();
+
+    }
+
+    private void handleLaunch(Launch msg) {
+        log.info("Process {} launched", id);
+
+        this.startProposingThread();
     }
 
     private void handleSetProcesses(SetProcesses msg) {
@@ -117,6 +161,12 @@ public class Process extends AbstractActor {
             gatheredResponses.clear();
             log.info("Process {} imposed proposal={} with ballot={}", id, proposal, ballot);
             broadcast(new Impose(ballot, proposal));
+
+            // reset proposing state
+            proposeLock.lock();
+            proposing = false;
+            proposeCondition.signal();
+            proposeLock.unlock();
         }
     }
 
@@ -168,6 +218,12 @@ public class Process extends AbstractActor {
         log.info("Process {} aborted proposal with ballot {}", id, msg.ballot());
         gatheredResponses.clear();
         ackResponses.clear();
+
+        // restart proposing
+        proposeLock.lock();
+        proposing = false;
+        proposeCondition.signal();
+        proposeLock.unlock();
     }
 
     private Receive crashed() {
@@ -184,6 +240,9 @@ public class Process extends AbstractActor {
     }
 
     private interface Msg {
+    }
+
+    public record Launch() implements Msg {
     }
 
     public record SetProcesses(List<ActorRef> processes) implements Msg {
@@ -212,6 +271,9 @@ public class Process extends AbstractActor {
     }
 
     public record Abort(int ballot) implements Msg {
+    }
+
+    public record Hold() implements Msg {
     }
 
     // TODO: add messages for leader handling (like Hold, ElectLeader)

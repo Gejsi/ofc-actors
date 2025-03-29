@@ -6,6 +6,7 @@ import akka.actor.DeadLetter;
 import akka.actor.Props;
 import akka.event.Logging;
 
+import java.time.Duration;
 import java.util.List;
 import java.util.Random;
 import java.util.stream.Collectors;
@@ -16,6 +17,7 @@ public class Main {
     private static final int NUM_PROCESSES = 10;
     private static final int FAULTY_PROCESSES = (NUM_PROCESSES - 1) / 2;
     private static final double CRASH_PROBABILITY = 0.1;
+    private static final Duration LEADER_ELECTION_DELAY = Duration.ofMillis(500);
 
 
     public static void main(String[] args) {
@@ -49,27 +51,29 @@ public class Main {
                 process.tell(new Process.Crash(), ActorRef.noSender());
             } else {
                 // propose random value (0 or 1)
-                process.tell(new Process.Propose(new Random().nextInt(2)), ActorRef.noSender());
+                process.tell(new Process.Launch(), ActorRef.noSender());
             }
         }
 
-        // TODO: add leader election
-        // system.scheduler().scheduleOnce(
-        // Duration.ofSeconds(2),
-        // () -> {
-        // List<ActorRef> candidates = processes.stream()
-        // .filter(p -> !crashIndices.contains(processes.indexOf(p)))
-        // .collect(Collectors.toList());
-        // ActorRef leader = candidates.get(random.nextInt(candidates.size()));
+        system.scheduler().scheduleOnce(
+                LEADER_ELECTION_DELAY,
+                () -> {
+                    List<ActorRef> candidates = processes.stream()
+                            .filter(p -> !crashIndices.contains(processes.indexOf(p)))
+                            .toList();
+                    ActorRef leader = candidates.get(random.nextInt(candidates.size()));
 
-        // processes.forEach(p -> p.tell(new Process.ElectLeader(leader),
-        // ActorRef.noSender()));
+                    log.info("Leader is process {}", processes.indexOf(leader));
 
-        // processes.stream()
-        // .filter(p -> !p.equals(leader))
-        // .forEach(p -> p.tell(new Process.Hold(), ActorRef.noSender()));
-        // },
-        // system.dispatcher());
+                    processes.stream()
+                            .filter(p -> !p.equals(leader))
+                            .forEach(p -> {
+                                log.info("Process {} is holding", processes.indexOf(p));
+                                p.tell(new Process.Hold(), ActorRef.noSender());
+                            });
+                },
+                system.dispatcher());
+
 
         long endTime = System.nanoTime();
         long latency = endTime - startTime;
@@ -77,11 +81,11 @@ public class Main {
         // timeout added to put the latency log as last,
         // this value may need to be increased depending on the
         // number of processes/operations
-        // try {
-        // Thread.sleep(Duration.ofSeconds(10));
-        // } catch (InterruptedException e) {
-        // e.printStackTrace();
-        // }
+        try {
+            Thread.sleep(20000);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
 
         log.info("Latency for N={}, f={}: {} ns", NUM_PROCESSES, FAULTY_PROCESSES, latency);
 
