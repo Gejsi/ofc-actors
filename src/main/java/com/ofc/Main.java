@@ -13,11 +13,10 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 public class Main {
-
-  private static final int NUM_PROCESSES = 20;
+  private static final int NUM_PROCESSES = 100;
   private static final int FAULTY_PROCESSES = (NUM_PROCESSES - 1) / 2;
   private static final double CRASH_PROBABILITY = 1;
-  private static final Duration LEADER_ELECTION_DELAY = Duration.ofMillis(0);
+  private static final Duration LEADER_ELECTION_DELAY = Duration.ofMillis(10);
 
   public static void main(String[] args) {
     ActorSystem system = ActorSystem.create("ofc");
@@ -42,16 +41,6 @@ public class Main {
 
     long startTime = System.nanoTime();
 
-    for (int i = 0; i < NUM_PROCESSES; i++) {
-      ActorRef process = processes.get(i);
-      if (crashIndices.contains(i)) {
-        process.tell(new Process.Crash(), ActorRef.noSender());
-      } else {
-        // propose random value (0 or 1)
-        process.tell(new Process.Propose(new Random().nextInt(2)), ActorRef.noSender());
-      }
-    }
-
     system.scheduler().scheduleOnce(
         LEADER_ELECTION_DELAY,
         () -> {
@@ -67,10 +56,18 @@ public class Main {
               .forEach(p -> {
                 p.tell(new Process.Hold(), ActorRef.noSender());
               });
-
-          leader.tell(new Process.Propose(69), ActorRef.noSender());
         },
         system.dispatcher());
+
+    for (int i = 0; i < NUM_PROCESSES; i++) {
+      ActorRef process = processes.get(i);
+      if (crashIndices.contains(i)) {
+        process.tell(new Process.Crash(), ActorRef.noSender());
+      } else {
+        // propose random value (0 or 1)
+        process.tell(new Process.Launch(), ActorRef.noSender());
+      }
+    }
 
     long latency = System.nanoTime() - startTime;
 

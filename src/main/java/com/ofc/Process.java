@@ -1,10 +1,12 @@
 package com.ofc;
 
+import java.time.Duration;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.Random;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
@@ -34,6 +36,8 @@ public class Process extends AbstractActor {
   private boolean proposing = false;
   private boolean holding = false;
   private final CrashProxy crashProxy;
+  private boolean launched = false;
+  private Integer valueToLaunch = null;
 
   private Process(int id, int n, double crashProbability) {
     this.id = id;
@@ -51,6 +55,8 @@ public class Process extends AbstractActor {
   @Override
   public Receive createReceive() {
     return receiveBuilder()
+        .match(Launch.class, this::handleLaunch)
+        .match(Hold.class, this::handleHold)
         .match(SetProcesses.class, crashProxy.getCrashableHandler(this::handleSetProcesses))
         .match(Propose.class, crashProxy.getCrashableHandler(this::handlePropose))
         .match(Read.class, crashProxy.getCrashableHandler(this::handleRead))
@@ -59,7 +65,6 @@ public class Process extends AbstractActor {
         .match(Ack.class, crashProxy.getCrashableHandler(this::handleAck))
         .match(Decide.class, crashProxy.getCrashableHandler(this::handleDecide))
         .match(Abort.class, crashProxy.getCrashableHandler(this::handleAbort))
-        .match(Hold.class, this::handleHold)
         .match(Crash.class, msg -> {
           crashProxy.enableCrash();
         })
@@ -71,19 +76,31 @@ public class Process extends AbstractActor {
     log.info("Process {} initialized with all {} processes", id, n);
   }
 
-  private void handlePropose(Propose msg) {
-    if (decided) {
-      log.debug("Process {} already decided: ignoring proposal {}", id, msg.value());
+  private void handleLaunch(Launch msg) {
+    if (launched || decided || holding) {
       return;
     }
+    launched = true;
+    valueToLaunch = new Random().nextInt(2);
 
+    log.info("Process {} launched! Will repeatedly propose value: {}", id, valueToLaunch);
+
+    self().tell(new Propose(valueToLaunch), self());
+  }
+
+  private void handlePropose(Propose msg) {
     if (proposing) {
-      log.debug("Process {} has a unresolved proposal: ignoring proposal {}", id, msg.value());
+      log.info("Process {} has a unresolved proposal: ignoring proposal {}", id, msg.value());
       return;
     }
 
     if (holding) {
       log.info("Process {} is holding: ignoring proposal {}", id, msg.value());
+      return;
+    }
+
+    if (decided) {
+      log.info("Process {} already decided: ignoring proposal {}", id, msg.value());
       return;
     }
 
@@ -166,8 +183,9 @@ public class Process extends AbstractActor {
 
     if (ackResponses.size() > n / 2) {
       log.info("Process {} decided {}", id, proposal);
-      broadcast(new Decide(proposal));
       setDecision(proposal);
+      broadcast(new Decide(proposal));
+      resetProposalState();
     }
   }
 
@@ -200,6 +218,22 @@ public class Process extends AbstractActor {
 
     log.info("Process {} aborted proposal with ballot {}", id, msg.ballot());
     resetProposalState();
+
+    if (launched && !holding && !decided) {
+      log.info("Process {} scheduled retry proposal for value {} after abort", id, valueToLaunch);
+
+      // self().tell(new Propose(valueToLaunch), getSelf());
+      // NOTE: instead of proposing immediately we can add
+      // a fixed amount of backoff; this is useful
+      // when the leader hasn't been elected yet,
+      // and the amount of contention would be to high with just ofcons
+      getContext().getSystem().scheduler().scheduleOnce(
+          Duration.ofMillis(100),
+          self(),
+          new Propose(valueToLaunch),
+          getContext().getSystem().dispatcher(),
+          self());
+    }
   }
 
   private void handleHold(Hold msg) {
@@ -251,6 +285,9 @@ public class Process extends AbstractActor {
   }
 
   public record SetProcesses(List<ActorRef> processes) implements Msg {
+  }
+
+  public record Launch() implements Msg {
   }
 
   public record Crash() implements Msg {
