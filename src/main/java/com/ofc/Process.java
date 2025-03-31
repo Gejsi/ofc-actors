@@ -1,6 +1,5 @@
 package com.ofc;
 
-import java.time.Duration;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
@@ -17,8 +16,6 @@ import akka.event.LoggingAdapter;
 import akka.japi.pf.FI;
 
 public class Process extends AbstractActor {
-    public static AtomicLong firstDecided = new AtomicLong(0);
-
   private final int id;
   private final int n;
   private final LoggingAdapter log = Logging.getLogger(getContext().getSystem(), this);
@@ -35,12 +32,12 @@ public class Process extends AbstractActor {
   // Actor state
   private List<ActorRef> processes;
   private boolean decided = false;
-  private Integer decidedValue;
   private boolean proposing = false;
   private boolean holding = false;
   private final CrashProxy crashProxy;
   private boolean launched = false;
   private Integer valueToLaunch = null;
+  public static AtomicLong firstDecided = new AtomicLong(0);
 
   private Process(int id, int n, double crashProbability) {
     this.id = id;
@@ -83,6 +80,7 @@ public class Process extends AbstractActor {
     if (launched || decided || holding) {
       return;
     }
+
     launched = true;
     valueToLaunch = new Random().nextInt(2);
 
@@ -225,8 +223,7 @@ public class Process extends AbstractActor {
     if (launched && !holding && !decided) {
       log.info("Process {} scheduled retry proposal for value {} after abort", id, valueToLaunch);
 
-       self().tell(new Propose(valueToLaunch), getSelf());
-
+      self().tell(new Propose(valueToLaunch), getSelf());
     }
   }
 
@@ -260,7 +257,6 @@ public class Process extends AbstractActor {
   private void setDecision(Integer value) {
     if (!decided) {
       decided = true;
-      decidedValue = value;
       firstDecided.compareAndSet(0, System.nanoTime());
     }
   }
