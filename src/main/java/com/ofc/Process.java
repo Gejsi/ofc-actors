@@ -7,6 +7,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Random;
+import java.util.concurrent.atomic.AtomicLong;
 
 import akka.actor.AbstractActor;
 import akka.actor.ActorRef;
@@ -16,6 +17,8 @@ import akka.event.LoggingAdapter;
 import akka.japi.pf.FI;
 
 public class Process extends AbstractActor {
+    public static AtomicLong firstDecided = new AtomicLong(0);
+
   private final int id;
   private final int n;
   private final LoggingAdapter log = Logging.getLogger(getContext().getSystem(), this);
@@ -222,17 +225,8 @@ public class Process extends AbstractActor {
     if (launched && !holding && !decided) {
       log.info("Process {} scheduled retry proposal for value {} after abort", id, valueToLaunch);
 
-      // self().tell(new Propose(valueToLaunch), getSelf());
-      // NOTE: instead of proposing immediately we can add
-      // a fixed amount of backoff; this is useful
-      // when the leader hasn't been elected yet,
-      // and the amount of contention would be to high with just ofcons
-      getContext().getSystem().scheduler().scheduleOnce(
-          Duration.ofMillis(100),
-          self(),
-          new Propose(valueToLaunch),
-          getContext().getSystem().dispatcher(),
-          self());
+       self().tell(new Propose(valueToLaunch), getSelf());
+
     }
   }
 
@@ -267,10 +261,7 @@ public class Process extends AbstractActor {
     if (!decided) {
       decided = true;
       decidedValue = value;
-      // TODO: maybe send back to Main the result as a Message
-      // to calculate accurately the latency? Or even better than Main
-      // another class just to handle this, so we can avoid making Main an actor
-      // getContext().parent().tell(new DecisionResult(id, value), getSelf());
+      firstDecided.compareAndSet(0, System.nanoTime());
     }
   }
 
